@@ -16,16 +16,19 @@ class TorchOneLinkTorqueLimb:
 
     def f(self, x, u):
         """
-        :param u: input vector
+        :param x: state (angle, angular velocity)
+        :param u: torque input
         :return: temporal derivative of state
         """
-        derivative = torch.zeros(2)
+        batch_size = len(u)
+        derivative = torch.zeros(batch_size, 2)
 
         if self.device is not None:
             derivative = derivative.to(self.device)
 
-        derivative[0] = x[1]
-        derivative[1] = (u - self.mass * 9.81 * self.com * torch.sin(x[0])) / self.I
+        # note u[:,0] needed here to avoid adding 3x1 tensor to 3 tensor, resulting in 3x3
+        derivative[:,0] = x[:,1]
+        derivative[:,1] = (u[:,0] - self.mass * 9.81 * self.com * torch.sin(x[:,0])) / self.I
         # print('{} {} {} {}'.format(dx1, dx2, x, u))
 
         return derivative

@@ -55,7 +55,7 @@ class TorchOscillator:
 
     def get_output(self, x, direct=None):
         activities = self.get_activities(x, direct=direct)
-        return torch.matmul(self.decoders, activities)
+        return torch.matmul(self.decoders, activities.T)
 
 
 def visualize_outputs(oscillator):
@@ -127,8 +127,10 @@ if __name__ == '__main__':
     freq = 1 * np.pi
     tau = 0.25
     o = Oscillator(50, freq=freq, tau=tau)
-    simulate(o, .01, 1)
+    # simulate(o, .01, 1)
 
-
-
+    torch_oscillator = TorchOscillator(o.encoders, o.biases, o.decoders)
+    # output = torch_oscillator.get_output(torch.zeros(2))
+    output = torch_oscillator.get_output(torch.zeros(10,2))
+    print(output)
 
