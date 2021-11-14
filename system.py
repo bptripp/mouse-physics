@@ -19,9 +19,13 @@ from limb import TorchOneLinkTorqueLimb
 #TODO: save oscillator params - make oscillator a nn.Module and impl state_dict and load_state_dict
 #TODO: Hill-type muscle model
 #DONE: reduce torque cost (model consistently undershoots a lot)
-#TODO: reduce weight regularization
-#TODO: lower cost on velocity (or introduce later in simulation?)
+#DONE: reduce weight regularization - seems to work very slightly better
+#DONE: lower velocity cost (or introduce later) - with vel cost in 2nd half typically hits target then gives up
+#DONE: remove velocity cost - works much better, final velocity close to zero anyway
 #TODO: provide steady-state input to oscillators?
+#TODO: Nat says consider connections to motor primitives (these would be latent components before oscillators?)
+#TODO: Michael says consider connections to CPGs
+
 
 class Net(nn.Module):
     def __init__(self):
@@ -209,7 +213,13 @@ def train(net, batch_size=3, batches=20000, device=None):
         # print(labels.is_cuda)
         # print(outputs.is_cuda)
         # print(torques.is_cuda)
-        loss = criterion(outputs, labels) + 1*torch.mean(torques.pow(2))
+
+        target_loss = torch.mean( (outputs[:,:,0] - input[:,1]).pow(2) )
+        velocity_loss = torch.mean(outputs[50:,:,0].pow(2)) # could ramp on less abruptly
+        torque_loss = torch.mean(torques.pow(2))
+        loss = target_loss + torque_loss
+        # loss = target_loss + velocity_loss + torque_loss
+        # loss = criterion(outputs, labels) + 1*torch.mean(torques.pow(2))
 
         # param_norm = sum(param.norm(2) for param in net.parameters())
         # loss = loss + 1e-6 * param_norm
