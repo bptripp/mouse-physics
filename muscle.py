@@ -4,6 +4,9 @@ import matplotlib.pyplot as plt
 
 #TODO: note Chow & Darling 1999 re scaling of max velocity with activation (see also Winters, 1990)
 #TODO: note Medler 2002 re. muscle diversity across species
+#TODO: clean up, rewrite in torch
+#TODO: run system with variable starting points
+#TODO: incorporate muscles into system
 
 class Muscle:
     def __init__(self, max_iso_force, muscle_rest_length, tendon_rest_length, max_velocity):
@@ -92,10 +95,11 @@ def pendulum_simulation():
     muscle_length = m.muscle_rest_length
     activation = .5
 
-    for i in range(3000):
+    for i in range(20000):
         t = t + dt
         total_length = get_total_length(angle)
         torque = muscle_moment_arm * m.force(muscle_length, total_length)
+        # torque = .5
 
         dmdt = m.derivative(muscle_length, total_length, activation)
         dvdt = (torque - link_mass * 9.81 * link_com * np.sin(angle)) / link_I

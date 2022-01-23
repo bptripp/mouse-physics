@@ -25,6 +25,9 @@ from limb import TorchOneLinkTorqueLimb
 #TODO: provide steady-state input to oscillators?
 #TODO: Nat says consider connections to motor primitives (these would be latent components before oscillators?)
 #TODO: Michael says consider connections to CPGs
+#TODO: need curriculum training for more complex action spaces?
+#TODO: gate other additive controls as well, e.g. feedback control, low-level reflexes
+#TODO: how to control movement vigour - consider role of basal ganglia? more than that
 
 
 class Net(nn.Module):
@@ -189,7 +192,7 @@ def train(net, batch_size=3, batches=20000, device=None):
         # target = -np.pi/2 + np.pi*np.random.rand()
 
         input = -np.pi/2 + np.pi*np.random.rand(batch_size, 2)
-        input[:,0] = 0
+        # input[:,0] = 0
 
         # input = torch.Tensor([start, target])
         input = torch.Tensor(input)
@@ -252,8 +255,8 @@ def train(net, batch_size=3, batches=20000, device=None):
 
 
 def plot_example(net, device=None):
-    # start = -np.pi / 2 + np.pi * np.random.rand()
-    start = 0
+    start = -np.pi / 2 + np.pi * np.random.rand()
+    # start = 0
     target = -np.pi / 2 + np.pi * np.random.rand()
     print(target)
 
@@ -297,7 +300,7 @@ if __name__ == '__main__':
     # plt.legend(('angle', 'velocity'))
     # plt.show()
 
-    # train(net)
+    train(net)
 
     checkpoint = torch.load('oscillator_limb_checkpoint.pt')
     print(checkpoint['loss'])
