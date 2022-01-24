@@ -56,25 +56,77 @@ class OneLinkTorqueLimb:
         return np.array([dx1, dx2])
 
 
-# class TorchTwoLinkTorqueLimb:
-#     def __init__(self):
-#         self.com = [.025, .025]
-#         self.mass = [.01, .0075]
-#         self.I = [.0002, .00015]
-#
-#     def f(self, x, u):
+class TorchTwoLinkTorqueLimb:
+    def __init__(self):
+        self.m1 = .01
+        self.m2 = .01
+        self.lc1 = .025
+        self.lc2 = .025
+        self.l1 = .05
+        self.l2 = .05
+        self.I1 = .0002
+        self.I2 = .0002
+
+        self.device = None
+
+    def f(self, x, u):
+        batch_size = len(u)
+        derivative = torch.zeros(batch_size, 4)
+
+        if self.device is not None:
+            derivative = derivative.to(self.device)
+
+        tau = u
+        q1 = x[:,0]
+        q2 = x[:,1]
+        dq1 = x[:,2]
+        dq2 = x[:,3]
+        c1 = torch.cos(q1)
+        c2 = torch.cos(q2)
+        s1 = torch.sin(q1)
+        s2 = torch.sin(q2)
+        c12 = torch.cos(q1+q2)
+        g = 9.81
+
+        H11 = self.m1*self.lc1**2 + self.I1 + self.m2*(self.l1**2 + self.lc2**2 + 2*self.l1*self.lc2*c2) + self.I2
+        H22 = self.m2*self.lc2**2 + self.I2
+        H12 = self.m2*(self.lc2**2 + self.l1*self.lc2*c2) + self.I2
+        h = self.m2*self.l1*self.lc2*s2
+        G1 = self.m1*self.lc1*g*(self.lc2*c12 + self.l1*c1)
+        G2 = self.m2*g*self.lc2*c12
+
+        H = torch.zeros((batch_size, 2, 2))
+        H[:,0,0] = H11
+        H[:,0,1] = H12
+        H[:,1,1] = H22
+        Hinv = torch.linalg.inv(H)
+
+        Hddq = torch.zeros((batch_size,2,1))
+        Hddq[:,0,0] = h*dq2**2 + 2*h*dq1*dq2 - G1
+        Hddq[:,1,0] = -h*dq1**2 - G2
+        Hddq[:,:,0] = Hddq[:,:,0] + tau
+
+        ddq = torch.matmul(Hinv, Hddq)
+
+        result = torch.zeros((batch_size, 4))
+        result[:,0] = dq1
+        result[:,1] = dq2
+        result[:,2:] = ddq[:,:,0]
+        return result
+
 
 class TwoLinkTorqueLimb:
     # https://www.youtube.com/watch?v=9ctGhk3cAas
     # https://ocw.mit.edu/courses/mechanical-engineering/2-12-introduction-to-robotics-fall-2005/lecture-notes/chapter7.pdf
     def __init__(self):
-        self.m1 = 1
-        self.m2 = 1
-        self.lc1 = 1
-        self.lc2 = 1
-        self.l1 = 1
-        self.I1 = 1
-        self.I2 = 1
+        self.m1 = .01
+        self.m2 = .01
+        self.lc1 = .025
+        self.lc2 = .025
+        self.l1 = .05
+        self.l2 = .05
+        self.I1 = .0002
+        self.I2 = .0002
 
     def f(self, x, u):
         tau = u
@@ -90,24 +142,26 @@ class TwoLinkTorqueLimb:
         g = 9.81
 
         # damping
-        tau[0] = tau[0] - 3*dq1
-        tau[1] = tau[1] - 3*dq2
+        # tau[0] = tau[0] - 3*dq1
+        # tau[1] = tau[1] - 3*dq2
+        # tau[0] = tau[0] - .0001*dq1
+        # tau[1] = tau[1] - .001*dq2
 
 
         # soft range of motion limits
         def ligament_torque(stretch):
-            return 2*(stretch/.1)**2
+            return .0002*(stretch/.1)**2
 
-        limits1 = [-np.pi, 0]
-        limits2 = [-np.pi/2, np.pi/2]
-        if q1 < limits1[0]:
-            tau[0] = tau[0] + ligament_torque(limits1[0]-q1)
-        if q1 > limits1[1]:
-            tau[0] = tau[0] - ligament_torque(q1-limits1[1])
-        if q2 < limits2[0]:
-            tau[1] = tau[1] + ligament_torque(limits2[0]-q2)
-        if q2 > limits2[1]:
-            tau[1] = tau[1] - ligament_torque(q2-limits2[1])
+        # limits1 = [-np.pi, 0]
+        # limits2 = [-np.pi/2, np.pi/2]
+        # if q1 < limits1[0]:
+        #     tau[0] = tau[0] + ligament_torque(limits1[0]-q1)
+        # if q1 > limits1[1]:
+        #     tau[0] = tau[0] - ligament_torque(q1-limits1[1])
+        # if q2 < limits2[0]:
+        #     tau[1] = tau[1] + ligament_torque(limits2[0]-q2)
+        # if q2 > limits2[1]:
+        #     tau[1] = tau[1] - ligament_torque(q2-limits2[1])
 
         H11 = self.m1*self.lc1**2 + self.I1 + self.m2*(self.l1**2 + self.lc2**2 + 2*self.l1*self.lc2*c2) + self.I2
         H22 = self.m2*self.lc2**2 + self.I2
@@ -147,39 +201,50 @@ class TwoLinkTorqueLimb:
         # G = g * np.array([2*s1+s12, s12])
         # ddQ = np.invert(M) * (T + C + G)
 
-def simulate(model, dt, T):
+def simulate2(model, dt, T, batch_size=3):
     times = []
     states = []
 
     time = 0
-    state = [0, 0, 0, 0]
+    state = np.zeros((batch_size, 4))
+    if type(model) == TorchTwoLinkTorqueLimb:
+        state = torch.Tensor(state)
 
-    times.append(time)
-    states.append(state)
+    def record(time, state):
+        times.append(time)
+        if type(model) == TorchTwoLinkTorqueLimb:
+            states.append(state.numpy())
+        else:
+            states.append(state)
+
+    record(time, state)
+    # times.append(time)
+    # states.append(state.numpy())
 
     while time < T:
-        u = np.zeros(2)
+        u = np.zeros((batch_size, 2))
         # u = np.array([0.0005 * (time > .1), 0])
         derivative = model.f(state, u)
 
         time = time + dt
         state = state + dt*derivative
 
-        times.append(time)
-        states.append(state)
+        record(time, state)
+        # times.append(time)
+        # states.append(state.numpy())
 
     figure, ax = plt.subplots()
-    ax.set_xlim(-2, 2)
-    ax.set_ylim(-2, 2)
+    ax.set_xlim(-2*model.l1, 2*model.l1)
+    ax.set_ylim(-2*model.l1, 2*model.l1)
     line1,  = ax.plot(0, 0)
     line2,  = ax.plot(0, 0)
 
     def animate_function(i):
-        state = states[i*10]
-        line1.set_xdata([0, 1*np.cos(state[0])])
-        line1.set_ydata([0, 1*np.sin(state[0])])
-        line2.set_xdata([1*np.cos(state[0]), 1*np.cos(state[0])+1*np.cos(state[0]+state[1])])
-        line2.set_ydata([1*np.sin(state[0]), 1*np.sin(state[0])+1*np.sin(state[0]+state[1])])
+        state = states[i*10][:,0]
+        line1.set_xdata([0, model.l1*np.cos(state[0])])
+        line1.set_ydata([0, model.l1*np.sin(state[0])])
+        line2.set_xdata([model.l1*np.cos(state[0]), model.l1*np.cos(state[0])+model.l2*np.cos(state[0]+state[1])])
+        line2.set_ydata([model.l1*np.sin(state[0]), model.l1*np.sin(state[0])+model.l2*np.sin(state[0]+state[1])])
 
     animation = FuncAnimation(figure,
                           func = animate_function,
@@ -190,50 +255,55 @@ def simulate(model, dt, T):
     times = np.array(times)
     states = np.array(states)
 
-    plt.plot(times, states)
+    print(times.shape)
+    print(states.shape)
+
+    plt.plot(times, states[:,0,:])
     plt.xlabel('Time (s)')
     plt.ylabel('State')
     plt.legend(('x1', 'x2', 'dx1', 'dx2'))
     plt.show()
 
 
-# def simulate(model, dt, T):
-#     times = []
-#     states = []
-#
-#     time = 0
-#     state = [0, 0]
-#     state = torch.Tensor(state)
-#
-#     times.append(time)
-#     states.append(state.numpy())
-#
-#     while time < T:
-#         u = 0.0005 * (time > .1)
-#         derivative = model.f(state, u)
-#
-#         time = time + dt
-#         state = state + dt*derivative
-#
-#         # range of motion limits
-#         if state[0] > np.pi / 3:
-#             state[0] = np.pi / 3
-#             state[1] = 0
-#         if state[0] < -np.pi / 3:
-#             state[0] = -np.pi / 3
-#             state[1] = 0
-#
-#         times.append(time)
-#         states.append(state.numpy())
-#
-#     times = np.array(times)
-#     states = np.array(states)
-#
-#     plt.plot(times, states)
-#     plt.xlabel('Time (s)')
-#     plt.ylabel('State')
-#     plt.legend(('x1', 'x2'))
-#     plt.show()
+def simulate(model, dt, T, batch_size=1):
+    times = []
+    states = []
+
+    time = 0
+    state = np.zeros((batch_size,2))
+    state = torch.Tensor(state)
+
+    times.append(time)
+    states.append(state.numpy())
+
+    while time < T:
+        u = 0.0005 * (time > .1) * np.ones((batch_size,1))
+        u = torch.Tensor(u)
+        derivative = model.f(state, u)
+
+        time = time + dt
+        state = state + dt*derivative
+
+        # range of motion limits
+        for i in range(batch_size):
+            if state[i,0] > np.pi / 3:
+                state[i,0] = np.pi / 3
+                state[i,1] = 0
+            if state[i,0] < -np.pi / 3:
+                state[i,0] = -np.pi / 3
+                state[i,1] = 0
+
+        times.append(time)
+        states.append(state.numpy())
+
+    times = np.array(times)
+    states = np.array(states)
+
+    plt.plot(times, states.squeeze())
+    plt.xlabel('Time (s)')
+    plt.ylabel('State')
+    plt.legend(('x1', 'x2'))
+    plt.show()
 
 
 if __name__ == '__main__':
@@ -254,5 +324,6 @@ if __name__ == '__main__':
     # model = TorchOneLinkTorqueLimb()
     # simulate(model, .01, 4)
 
-    model = TwoLinkTorqueLimb()
-    simulate(model, .005, 10)
+    # # model = TwoLinkTorqueLimb()
+    model = TorchTwoLinkTorqueLimb()
+    simulate2(model, .001, 2)
