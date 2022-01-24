@@ -206,9 +206,11 @@ def simulate2(model, dt, T, batch_size=3):
     states = []
 
     time = 0
-    state = np.zeros((batch_size, 4))
     if type(model) == TorchTwoLinkTorqueLimb:
+        state = np.zeros((batch_size, 4))
         state = torch.Tensor(state)
+    else:
+        state = np.zeros(4)
 
     def record(time, state):
         times.append(time)
@@ -222,7 +224,11 @@ def simulate2(model, dt, T, batch_size=3):
     # states.append(state.numpy())
 
     while time < T:
-        u = np.zeros((batch_size, 2))
+        if type(model) == TorchTwoLinkTorqueLimb:
+            u = np.zeros((batch_size, 2))
+        else:
+            u = np.zeros(2)
+
         # u = np.array([0.0005 * (time > .1), 0])
         derivative = model.f(state, u)
 
@@ -233,14 +239,25 @@ def simulate2(model, dt, T, batch_size=3):
         # times.append(time)
         # states.append(state.numpy())
 
+
+    times = np.array(times)
+    states = np.array(states)
+
+    print(states.shape)
+
+    if type(model) == TorchTwoLinkTorqueLimb:
+        states = states[:,0,:]
+
     figure, ax = plt.subplots()
     ax.set_xlim(-2*model.l1, 2*model.l1)
     ax.set_ylim(-2*model.l1, 2*model.l1)
     line1,  = ax.plot(0, 0)
     line2,  = ax.plot(0, 0)
 
+    plot_interval = 10
     def animate_function(i):
-        state = states[i*10][:,0]
+        # state = states[i*10][:,0]
+        state = states[i*plot_interval]
         line1.set_xdata([0, model.l1*np.cos(state[0])])
         line1.set_ydata([0, model.l1*np.sin(state[0])])
         line2.set_xdata([model.l1*np.cos(state[0]), model.l1*np.cos(state[0])+model.l2*np.cos(state[0]+state[1])])
@@ -248,17 +265,11 @@ def simulate2(model, dt, T, batch_size=3):
 
     animation = FuncAnimation(figure,
                           func = animate_function,
-                          frames = int(len(times)/10),
+                          frames = int(len(times)/plot_interval),
                           interval = dt)
     plt.show()
 
-    times = np.array(times)
-    states = np.array(states)
-
-    print(times.shape)
-    print(states.shape)
-
-    plt.plot(times, states[:,0,:])
+    plt.plot(times, states)
     plt.xlabel('Time (s)')
     plt.ylabel('State')
     plt.legend(('x1', 'x2', 'dx1', 'dx2'))
@@ -324,6 +335,6 @@ if __name__ == '__main__':
     # model = TorchOneLinkTorqueLimb()
     # simulate(model, .01, 4)
 
-    # # model = TwoLinkTorqueLimb()
-    model = TorchTwoLinkTorqueLimb()
+    model = TwoLinkTorqueLimb()
+    # model = TorchTwoLinkTorqueLimb()
     simulate2(model, .001, 2)
