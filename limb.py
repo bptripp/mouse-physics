@@ -77,7 +77,7 @@ class TorchTwoLinkTorqueLimb:
         if self.device is not None:
             derivative = derivative.to(self.device)
 
-        tau = u
+        tau = u.clone()
         q1 = x[:,0]
         q2 = x[:,1]
         dq1 = x[:,2]
@@ -88,11 +88,15 @@ class TorchTwoLinkTorqueLimb:
         c12 = torch.cos(q1+q2)
         g = 9.81
 
+        # damping
+        tau[:,0] = tau[:,0] - .0003*dq1
+        tau[:,1] = tau[:,1] - .0003*dq2
+
         H11 = self.m1*self.lc1**2 + self.I1 + self.m2*(self.l1**2 + self.lc2**2 + 2*self.l1*self.lc2*c2) + self.I2
         H22 = self.m2*self.lc2**2 + self.I2
         H12 = self.m2*(self.lc2**2 + self.l1*self.lc2*c2) + self.I2
         h = self.m2*self.l1*self.lc2*s2
-        G1 = self.m1*self.lc1*g*(self.lc2*c12 + self.l1*c1)
+        G1 = self.m1*self.lc1*g*c1 + self.m2*g*(self.lc2*c12 + self.l1*c1)
         G2 = self.m2*g*self.lc2*c12
 
         H = torch.zeros((batch_size, 2, 2))
@@ -185,9 +189,8 @@ def simulate_two_link(model, dt, T, batch_size=3):
 
     time = 0
     if type(model) == TorchTwoLinkTorqueLimb:
-        state = np.zeros((batch_size, 4))
-        state = torch.Tensor(state)
-        u = np.zeros((batch_size, 2))
+        state = torch.zeros((batch_size, 4))
+        u = torch.zeros((batch_size, 2))
     else:
         state = np.zeros(4)
         u = np.zeros(2)
@@ -301,6 +304,6 @@ if __name__ == '__main__':
     # model = TorchOneLinkTorqueLimb()
     # simulate(model, .01, 4)
 
-    model = TwoLinkTorqueLimb()
-    # model = TorchTwoLinkTorqueLimb()
+    # model = TwoLinkTorqueLimb()
+    model = TorchTwoLinkTorqueLimb()
     simulate_two_link(model, .001, 4)
