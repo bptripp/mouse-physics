@@ -92,6 +92,17 @@ class TorchTwoLinkTorqueLimb:
         tau[:,0] = tau[:,0] - .0003*dq1
         tau[:,1] = tau[:,1] - .0003*dq2
 
+        # soft range of motion limits
+        def ligament_torque(stretch):
+            return (stretch > 0) * .0001*(stretch/.05)**2
+
+        limits1 = [-np.pi, 0]
+        limits2 = [-np.pi/2, np.pi/2]
+        tau[:,0] = tau[:,0] + ligament_torque(limits1[0]-q1)
+        tau[:,0] = tau[:,0] - ligament_torque(q1-limits1[1])
+        tau[:,1] = tau[:,1] + ligament_torque(limits2[0]-q2)
+        tau[:,1] = tau[:,1] - ligament_torque(q2-limits2[1])
+
         H11 = self.m1*self.lc1**2 + self.I1 + self.m2*(self.l1**2 + self.lc2**2 + 2*self.l1*self.lc2*c2) + self.I2
         H22 = self.m2*self.lc2**2 + self.I2
         H12 = self.m2*(self.lc2**2 + self.l1*self.lc2*c2) + self.I2
@@ -155,18 +166,14 @@ class TwoLinkTorqueLimb:
 
         # soft range of motion limits
         def ligament_torque(stretch):
-            return .0002*(stretch/.1)**2
+            return (stretch > 0) * .0001*(stretch/.05)**2
 
-        # limits1 = [-np.pi, 0]
-        # limits2 = [-np.pi/2, np.pi/2]
-        # if q1 < limits1[0]:
-        #     tau[0] = tau[0] + ligament_torque(limits1[0]-q1)
-        # if q1 > limits1[1]:
-        #     tau[0] = tau[0] - ligament_torque(q1-limits1[1])
-        # if q2 < limits2[0]:
-        #     tau[1] = tau[1] + ligament_torque(limits2[0]-q2)
-        # if q2 > limits2[1]:
-        #     tau[1] = tau[1] - ligament_torque(q2-limits2[1])
+        limits1 = [-np.pi, 0]
+        limits2 = [-np.pi/2, np.pi/2]
+        tau[0] = tau[0] + ligament_torque(limits1[0]-q1)
+        tau[0] = tau[0] - ligament_torque(q1-limits1[1])
+        tau[1] = tau[1] + ligament_torque(limits2[0]-q2)
+        tau[1] = tau[1] - ligament_torque(q2-limits2[1])
 
         H11 = self.m1*self.lc1**2 + self.I1 + self.m2*(self.l1**2 + self.lc2**2 + 2*self.l1*self.lc2*c2) + self.I2
         H22 = self.m2*self.lc2**2 + self.I2
@@ -304,6 +311,6 @@ if __name__ == '__main__':
     # model = TorchOneLinkTorqueLimb()
     # simulate(model, .01, 4)
 
-    # model = TwoLinkTorqueLimb()
-    model = TorchTwoLinkTorqueLimb()
+    model = TwoLinkTorqueLimb()
+    # model = TorchTwoLinkTorqueLimb()
     simulate_two_link(model, .001, 4)
