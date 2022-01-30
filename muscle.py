@@ -2,11 +2,22 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-#TODO: note Chow & Darling 1999 re scaling of max velocity with activation (see also Winters, 1990)
 #TODO: note Medler 2002 re. muscle diversity across species
 #TODO: clean up, rewrite in torch
-#TODO: run system with variable starting points
-#TODO: incorporate muscles into system
+
+"""
+Winters, J. M. (1990). Hill-based muscle models: a systems engineering perspective. In Multiple muscle systems (pp. 69-93). 
+Springer, New York, NY.
+
+Chow, J. W., & Darling, W. G. (1999). The maximum shortening velocity of muscle should be scaled with activation. 
+Journal of Applied Physiology, 86(3), 1025-1031.
+
+Camilleri, M. J., & Hull, M. L. (2005). Are the maximum shortening velocity and the shape parameter in a Hill-type model of whole muscle 
+related to activation?. Journal of biomechanics, 38(11), 2172-2180.
+
+Zahalak, G. I., Duffy, J., Stewart, P. A., Litchman, H. M., Hawley, R. H., & Paslay, P. R. (1976). Partially activated human skeletal muscle: 
+an experimental investigation of force, velocity, and EMG.
+"""
 
 class Muscle:
     def __init__(self, max_iso_force, muscle_rest_length, tendon_rest_length, max_velocity):
@@ -24,12 +35,34 @@ class Muscle:
         norm_contractile_force = norm_tendon_force - norm_parallel_force
         force_velocity_factor = norm_contractile_force / activation / force_length_contractile(norm_muscle_length)
         norm_derivative = force_velocity_contractile_inverse(force_velocity_factor)
-        return self.max_velocity * norm_derivative
+        activation_velocity_factor = .6 + .4 * activation
+        return self.max_velocity * activation_velocity_factor * norm_derivative
 
     def force(self, muscle_length, total_length):
         tendon_length = total_length - muscle_length
         norm_tendon_length = tendon_length / self.tendon_rest_length
         return self.max_iso_force * force_length_series(norm_tendon_length)
+
+
+class Activation:
+    """
+    Modified from Millard, M., Uchida, T., Seth, A., & Delp, S. L. (2013). Flexing computational muscle: modeling and
+    simulation of musculotendon dynamics. Journal of biomechanical engineering, 135(2).
+    """
+    def __init__(self):
+        self.a_min = .05
+        self.tau_a = .01
+        self.tau_d = .04
+
+    def derivative(self, activation, excitation):
+        excitation = np.clip(excitation, self.a_min, 1)
+
+        if excitation > activation:
+            tau = self.tau_a * (.5 + 1.5*activation)
+        else:
+            tau = self.tau_d / (.5 + 1.5*activation)
+
+        return (excitation - activation) / tau
 
 
 def isometric_simulation():
@@ -65,6 +98,30 @@ def isometric_simulation():
     plt.show()
 
 
+def activation_simulation():
+    activation = Activation()
+    a = activation.a_min
+
+    times = []
+    activations = []
+    t = 0
+    dt = .001
+
+    for e in [1, 0]:
+        for i in range(300):
+            d = activation.derivative(a, e)
+            a = a + dt*d
+            t = t + dt
+            times.append(t)
+            activations.append(a)
+
+    plt.plot(times, activations)
+    plt.xlabel('Time (s)')
+    plt.ylabel('Activation')
+    plt.ylim([0,1.1])
+    plt.show()
+
+
 def pendulum_simulation():
     link_com = .1
     link_mass = 1
@@ -80,7 +137,8 @@ def pendulum_simulation():
         return np.linalg.norm(muscle_origin - global_insertion)
 
     total_rest_length = get_total_length(0)
-    m = Muscle(100, .95*total_rest_length, .05*total_rest_length, 3*total_rest_length)
+    m = Muscle(100, .9*total_rest_length, .1*total_rest_length, 3*total_rest_length)
+    a = Activation()
 
     times = []
     lengths = []
@@ -93,7 +151,9 @@ def pendulum_simulation():
     angle = 0
     angular_velocity = 0
     muscle_length = m.muscle_rest_length
-    activation = .5
+    activation = 0.1
+    excitation = .5
+    # activation = .5
 
     for i in range(20000):
         t = t + dt
@@ -101,10 +161,14 @@ def pendulum_simulation():
         torque = muscle_moment_arm * m.force(muscle_length, total_length)
         # torque = .5
 
+        torque = torque - .05*angular_velocity
+
+        dactdt = a.derivative(activation, excitation)
         dmdt = m.derivative(muscle_length, total_length, activation)
         dvdt = (torque - link_mass * 9.81 * link_com * np.sin(angle)) / link_I
         dadt = angular_velocity
 
+        activation = activation + dt*dactdt
         muscle_length = muscle_length + dt*dmdt
         angular_velocity = angular_velocity + dt*dvdt
         angle = angle + dt*dadt
@@ -156,9 +220,6 @@ def force_velocity_contractile(v):
     # return p, p2
 
 
-def simulate_isometric():
-    pass
-
 def force_velocity_contractile_inverse(p):
     p0 = 1
     a = 1
@@ -199,13 +260,6 @@ def force_length_parallel(l):
 
 
 def plot_curves():
-    # velocity = np.linspace(-1, 1, 50)
-    # force = force_velocity_contractile(velocity)
-    # plt.plot(velocity, force)
-    # # plt.plot(velocity, foo)
-    # plt.ylim(0, 2)
-    # plt.show()
-
     plt.figure(figsize=(11,4))
 
     plt.subplot(131)
@@ -245,4 +299,5 @@ def plot_curves():
 if __name__ == '__main__':
     # plot_curves()
     # isometric_simulation()
+    # activation_simulation()
     pendulum_simulation()
