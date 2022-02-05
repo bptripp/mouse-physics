@@ -55,43 +55,44 @@ class Activation:
         self.tau_d = .04
 
     def derivative(self, activation, excitation):
-        excitation = np.clip(excitation, self.a_min, 1)
+        excitation = torch.clip(excitation, self.a_min, 1)
 
-        if excitation > activation:
-            tau = self.tau_a * (.5 + 1.5*activation)
-        else:
-            tau = self.tau_d / (.5 + 1.5*activation)
+        increasing = excitation > activation
+        tau = increasing * self.tau_a * (.5 + 1.5*activation) + ~increasing * self.tau_d / (.5 + 1.5*activation)
 
         return (excitation - activation) / tau
 
 
 def isometric_simulation():
     m = Muscle(100, .1, .05, .3)
-    muscle_length = .1
-    total_length = .15
+    muscle_length = torch.tensor([.1, .1, .1])
+    total_length = torch.tensor([.15, .15, .15])
+    activation = torch.tensor([.33, .66, 1])
+    batch_size = len(muscle_length)
 
+    steps = 50
     times = []
-    lengths = []
-    forces = []
+    lengths = torch.zeros((batch_size, steps))
+    forces = torch.zeros((batch_size, steps))
     t = 0
     dt = .005
-    for i in range(50):
-        d = m.derivative(muscle_length, total_length, 1)
+    for i in range(steps):
+        d = m.derivative(muscle_length, total_length, activation)
         muscle_length = muscle_length + dt*d
         t = t + dt
         times.append(t)
-        lengths.append(muscle_length)
-        forces.append(m.force(muscle_length, total_length))
+        lengths[:,i] = muscle_length
+        forces[:,i] = m.force(muscle_length, total_length)
 
     print(total_length - muscle_length)
 
     plt.figure(figsize=(7,3))
     plt.subplot(121)
-    plt.plot(times, lengths)
+    plt.plot(times, lengths[2,:])
     plt.xlabel('Time (s)')
     plt.ylabel('CE Length')
     plt.subplot(122)
-    plt.plot(times, forces)
+    plt.plot(times, forces[2,:])
     plt.xlabel('Time (s)')
     plt.ylabel('Force')
     plt.tight_layout()
@@ -100,22 +101,23 @@ def isometric_simulation():
 
 def activation_simulation():
     activation = Activation()
-    a = activation.a_min
+    a = torch.tensor([activation.a_min, activation.a_min]) # batch size 2
 
     times = []
-    activations = []
+    activations = torch.zeros((2,600))
     t = 0
     dt = .001
 
-    for e in [1, 0]:
-        for i in range(300):
-            d = activation.derivative(a, e)
-            a = a + dt*d
-            t = t + dt
-            times.append(t)
-            activations.append(a)
+    for i in range(600):
+        e = 1 if i < 300 else 0
+        e = torch.tensor([.5 * e, e])
+        d = activation.derivative(a, e)
+        a = a + dt*d
+        t = t + dt
+        times.append(t)
+        activations[:,i] = a
 
-    plt.plot(times, activations)
+    plt.plot(times, activations[1,:])
     plt.xlabel('Time (s)')
     plt.ylabel('Activation')
     plt.ylim([0,1.1])
@@ -127,35 +129,44 @@ def pendulum_simulation():
     link_mass = 1
     link_I = link_mass * link_com**2
 
-    muscle_origin = np.array([0, .01]) # global coords
-    muscle_insertion = np.array([0, -.2]) # link coords
-    muscle_moment_arm = .01 # TODO: let moment arm vary?
+    muscle_origin = torch.tensor([0, .01]) # global coords
+    muscle_insertion = torch.tensor([0, -.2]) # link coords
+    muscle_moment_arm = .01
 
     def get_total_length(angle):
-        rotation = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
-        global_insertion = np.matmul(rotation, muscle_insertion)
-        return np.linalg.norm(muscle_origin - global_insertion)
+        rotation = torch.zeros((len(angle), 2, 2))
+        rotation[:,0,0] = torch.cos(angle)
+        rotation[:,0,1] = -torch.sin(angle)
+        rotation[:,1,0] = torch.sin(angle)
+        rotation[:,1,1] = torch.cos(angle)
+        # rotation = torch.tensor([[torch.cos(angle), -torch.sin(angle)], [torch.sin(angle), torch.cos(angle)]])
+        global_insertion = torch.matmul(rotation, muscle_insertion)
+        difference = muscle_origin - global_insertion
+        return torch.linalg.vector_norm(difference, dim=1)
 
-    total_rest_length = get_total_length(0)
+    total_rest_length = get_total_length(torch.zeros(1))
     m = Muscle(100, .9*total_rest_length, .1*total_rest_length, 3*total_rest_length)
     a = Activation()
 
+    batch_size = 3
+    steps = 2000
+
     times = []
-    lengths = []
-    forces = []
-    angles = []
+    lengths = torch.zeros(batch_size, steps)
+    forces = torch.zeros(batch_size, steps)
+    angles = torch.zeros(batch_size, steps)
 
     t = 0
-    dt = .0005
+    dt = .001
 
-    angle = 0
-    angular_velocity = 0
+    angle = torch.zeros(batch_size)
+    angular_velocity = torch.zeros(batch_size)
     muscle_length = m.muscle_rest_length
-    activation = 0.1
-    excitation = .5
+    activation = torch.tensor(0.1*np.ones(batch_size))
+    excitation = torch.tensor([.25, .5, .75])
     # activation = .5
 
-    for i in range(20000):
+    for i in range(steps):
         t = t + dt
         total_length = get_total_length(angle)
         torque = muscle_moment_arm * m.force(muscle_length, total_length)
@@ -165,7 +176,7 @@ def pendulum_simulation():
 
         dactdt = a.derivative(activation, excitation)
         dmdt = m.derivative(muscle_length, total_length, activation)
-        dvdt = (torque - link_mass * 9.81 * link_com * np.sin(angle)) / link_I
+        dvdt = (torque - link_mass * 9.81 * link_com * torch.sin(angle)) / link_I
         dadt = angular_velocity
 
         activation = activation + dt*dactdt
@@ -174,21 +185,23 @@ def pendulum_simulation():
         angle = angle + dt*dadt
 
         times.append(t)
-        lengths.append(muscle_length)
-        forces.append(torque/muscle_moment_arm)
-        angles.append(angle)
+        lengths[:,i] = muscle_length
+        forces[:,i] = torque/muscle_moment_arm
+        angles[:,i] = angle
+
+    print(lengths.size())
 
     plt.figure(figsize=(9,3))
     plt.subplot(131)
-    plt.plot(times, lengths)
+    plt.plot(times, torch.transpose(lengths, 0, 1))
     plt.xlabel('Time (s)')
     plt.ylabel('CE Length')
     plt.subplot(132)
-    plt.plot(times, forces)
+    plt.plot(times, torch.transpose(forces, 0, 1))
     plt.xlabel('Time (s)')
     plt.ylabel('Force')
     plt.subplot(133)
-    plt.plot(times, angles)
+    plt.plot(times, torch.transpose(angles, 0, 1))
     plt.xlabel('Time (s)')
     plt.ylabel('Angle')
     plt.tight_layout()
@@ -204,7 +217,7 @@ def force_velocity_contractile(v):
     # p (v-b)  = -av - bp0
     # p = -(av+bp0) / (v-b)
 
-    v = np.clip(v, -1, .99)
+    v = torch.clip(v, -1, .99)
     a = 1
     b = 1
     p = -(a*v+b*p0) / (v-b)
@@ -212,11 +225,9 @@ def force_velocity_contractile(v):
     #TODO: this may be too shallow for large lengthening velocities - could reduce 4 to 2
     # dpdv = (-a*(v-b) + (a*v+b*p0)) / (v-b)**2
     dpdv0 = (-a*(-b) + (b*p0)) / (-b)**2
-    # x = 4*dpdv*v
     x = 4*dpdv0*v
-    # p2 = 0.5 + 1 / (1+np.exp(-x))
-    p2 = .5 + 1 / (1+np.exp(-x))
-    return np.minimum(p, p2)
+    p2 = .5 + 1 / (1+torch.exp(-x))
+    return torch.minimum(p, p2)
     # return p, p2
 
 
@@ -224,30 +235,30 @@ def force_velocity_contractile_inverse(p):
     p0 = 1
     a = 1
     b = 1
-    p = np.clip(p, 0, 1.4999)
+    p = torch.clip(p, 0, 1.4999)
     v1 = b*(p-p0)/(p+a)
 
-    p2 = np.clip(p - .5, .0001, .9999)
-    x = np.log(p2/(1-p2))
+    p2 = torch.clip(p - .5, .0001, .9999)
+    x = torch.log(p2/(1-p2))
     dpdv0 = (-a * (-b) + (b * p0)) / (-b) ** 2
     v2 = x/4/dpdv0
 
     # return v1, v2
-    return np.maximum(v1, v2)
+    return torch.maximum(v1, v2)
 
 
 def force_length_contractile(l):
     # force = np.maximum(0, np.cos(np.pi*(l-1)))
-    return np.exp( - (l-1)**2 / (2*.3**2) )
+    return torch.exp( - (l-1)**2 / (2*.3**2) )
 
 
 def force_length_series(l):
-    stretch = np.maximum(0, l-1)
+    stretch = torch.relu(l-1)
     return 10*stretch + 200*stretch**2
 
 
 def force_length_parallel(l):
-    stretch = np.maximum(0, l - 1)
+    stretch = torch.relu(l - 1)
     return 3*stretch**2 / (.6 + stretch)
 
 # logistic function: f(x) = 1/(1+e^-x)
@@ -263,7 +274,7 @@ def plot_curves():
     plt.figure(figsize=(11,4))
 
     plt.subplot(131)
-    length = np.linspace(0, 2, 200)
+    length = torch.linspace(0, 2, 200)
     force = force_length_contractile(length)
     plt.plot(length, force)
     force = force_length_series(length)
@@ -276,7 +287,7 @@ def plot_curves():
     plt.ylim([0, 1.6])
 
     plt.subplot(132)
-    velocity = np.linspace(-1.2, 1, 100)
+    velocity = torch.linspace(-1.2, 1, 100)
     force = force_velocity_contractile(velocity)
     plt.plot(velocity, force, 'k')
     plt.xlabel('Normalized velocity')
@@ -285,7 +296,7 @@ def plot_curves():
 
     plt.subplot(133)
     plt.plot(force, velocity, 'k.')
-    force = np.linspace(0, 1.5, 100)
+    force = torch.linspace(0, 1.5, 100)
     velocity = force_velocity_contractile_inverse(force)
     plt.plot(force, velocity, 'k')
     plt.ylim([-1,1])
