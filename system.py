@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from oscillator import Oscillator, TorchOscillator
-from limb import TorchOneLinkTorqueLimb
+from limb import TorchOneLinkTorqueLimb, TorchOneLinkMuscleLimb
 
 #DONE: enforce 2D oscillator input - seems worse
 #DONE: support minibatches
@@ -42,7 +42,7 @@ class Net(nn.Module):
         # self.fc3 = nn.Linear(128, self.n_oscillators*self.n_per_oscillator)
         self.fc3 = nn.Linear(128, self.n_oscillators*2)
 
-        self.fcdirect = nn.Linear(128, 1)
+        self.fcdirect = nn.Linear(128, 2)
         self.fcdirect.weight = torch.nn.parameter.Parameter(self.fcdirect.weight / 100)
         self.fcdirect.bias = torch.nn.parameter.Parameter(self.fcdirect.bias * 0)
 
@@ -58,11 +58,12 @@ class Net(nn.Module):
 
         # x1_encoders = torch.cat(x1_encoders)
 
-        self.fc4 = nn.Linear(self.n_oscillators * self.n_per_oscillator, 1)
+        self.fc4 = nn.Linear(self.n_oscillators * self.n_per_oscillator, 2)
         self.fc4.weight = torch.nn.parameter.Parameter(self.fc4.weight / 10000)
         self.fc4.bias = torch.nn.parameter.Parameter(self.fc4.bias * 0)
 
-        self.limb = TorchOneLinkTorqueLimb()
+        # self.limb = TorchOneLinkTorqueLimb()
+        self.limb = TorchOneLinkMuscleLimb()
 
         self.device = None
 
@@ -87,16 +88,19 @@ class Net(nn.Module):
         #TODO: use torch.split instead of torch.narrow?
 
         o_states = torch.zeros((self.n_oscillators, batch_size, 2))
-        l_state = torch.zeros((batch_size, 2))
+        # l_state = torch.zeros((batch_size, 2))
+        # l_state[:,0] = current_state
+        l_state = torch.zeros((batch_size, 4))
         l_state[:,0] = current_state
-        # o_states = torch.zeros((self.n_oscillators, 2))
-        # l_state = torch.zeros(2)
-        # l_state[0] = current_state
 
-        dt = 0.01
+        # dt = 0.01
         steps = 100
-        l_states = torch.zeros(steps, batch_size, 2)
-        torques = torch.zeros(steps, batch_size)
+        dt = 0.001
+        steps = 700
+        # l_states = torch.zeros(steps, batch_size, 2)
+        # torques = torch.zeros(steps, batch_size)
+        l_states = torch.zeros(steps, batch_size, 4)
+        torques = torch.zeros(steps, batch_size, 2)
 
         if self.device is not None:
             o_states = o_states.to(self.device)
@@ -142,10 +146,11 @@ class Net(nn.Module):
             # activities = torch.cat(activities)
             # print(activities.shape)
             # print(activities)
-            torque = (self.fc4(activities) + direct)
+            torque = (self.fc4(activities) + direct) ## muscle activation now
             # torque = direct
 
-            torques[i,:] = torque.T
+            # torques[i,:] = torque.T
+            torques[i,:,:] = torque
 
             derivative = self.limb.f(l_state, torque)
             l_state = l_state + dt*derivative
@@ -307,6 +312,3 @@ if __name__ == '__main__':
     net.load_state_dict(checkpoint['model_state_dict'])
     plot_example(net)
 
-
-    #TODO: test with other random targets & plot
-    #TODO: train in batches, move to cluster

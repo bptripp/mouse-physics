@@ -3,20 +3,20 @@ import torch
 import matplotlib.pyplot as plt
 
 #TODO: note Medler 2002 re. muscle diversity across species
-#TODO: clean up, rewrite in torch
 
 """
-Winters, J. M. (1990). Hill-based muscle models: a systems engineering perspective. In Multiple muscle systems (pp. 69-93). 
-Springer, New York, NY.
+Winters, J. M. (1990). Hill-based muscle models: a systems engineering perspective. 
+In Multiple muscle systems (pp. 69-93). Springer, New York, NY.
 
-Chow, J. W., & Darling, W. G. (1999). The maximum shortening velocity of muscle should be scaled with activation. 
-Journal of Applied Physiology, 86(3), 1025-1031.
+Chow, J. W., & Darling, W. G. (1999). The maximum shortening velocity of muscle should 
+be scaled with activation. Journal of Applied Physiology, 86(3), 1025-1031.
 
-Camilleri, M. J., & Hull, M. L. (2005). Are the maximum shortening velocity and the shape parameter in a Hill-type model of whole muscle 
-related to activation?. Journal of biomechanics, 38(11), 2172-2180.
+Camilleri, M. J., & Hull, M. L. (2005). Are the maximum shortening velocity and the shape
+parameter in a Hill-type model of whole muscle related to activation?. Journal of 
+Biomechanics, 38(11), 2172-2180.
 
-Zahalak, G. I., Duffy, J., Stewart, P. A., Litchman, H. M., Hawley, R. H., & Paslay, P. R. (1976). Partially activated human skeletal muscle: 
-an experimental investigation of force, velocity, and EMG.
+Zahalak, G. I., Duffy, J., Stewart, P. A., Litchman, H. M., Hawley, R. H., & Paslay, P. R. (1976). 
+Partially activated human skeletal muscle: an experimental investigation of force, velocity, and EMG.
 """
 
 class Muscle:
@@ -25,13 +25,20 @@ class Muscle:
         self.muscle_rest_length = muscle_rest_length
         self.tendon_rest_length = tendon_rest_length
         self.max_velocity = max_velocity
+        self.a_min = 0.1
+
+    def set_device(self, device):
+        self.muscle_rest_length = self.muscle_rest_length.to(device)
+        self.tendon_rest_length = self.tendon_rest_length.to(device)
+        self.max_velocity = self.max_velocity.to(device)
 
     def derivative(self, muscle_length, total_length, activation):
+        activation = torch.clip(activation, self.a_min, 1)
         tendon_length = total_length - muscle_length
         norm_tendon_length = tendon_length / self.tendon_rest_length
         norm_muscle_length = muscle_length / self.muscle_rest_length
         norm_tendon_force = force_length_series(norm_tendon_length)
-        norm_parallel_force = force_length_parallel(muscle_length)
+        norm_parallel_force = force_length_parallel(norm_muscle_length)
         norm_contractile_force = norm_tendon_force - norm_parallel_force
         force_velocity_factor = norm_contractile_force / activation / force_length_contractile(norm_muscle_length)
         norm_derivative = force_velocity_contractile_inverse(force_velocity_factor)
@@ -46,8 +53,9 @@ class Muscle:
 
 class Activation:
     """
-    Modified from Millard, M., Uchida, T., Seth, A., & Delp, S. L. (2013). Flexing computational muscle: modeling and
-    simulation of musculotendon dynamics. Journal of biomechanical engineering, 135(2).
+    Modified from Millard, M., Uchida, T., Seth, A., & Delp, S. L. (2013). Flexing computational
+    muscle: modeling and simulation of musculotendon dynamics. Journal of Biomechanical Engineering,
+    135(2).
     """
     def __init__(self):
         self.a_min = .05
@@ -64,10 +72,12 @@ class Activation:
 
 
 def isometric_simulation():
+    a = Activation()
     m = Muscle(100, .1, .05, .3)
     muscle_length = torch.tensor([.1, .1, .1])
     total_length = torch.tensor([.15, .15, .15])
-    activation = torch.tensor([.33, .66, 1])
+    excitation = torch.tensor([.33, .66, 1])
+    activation = torch.tensor([0, 0, 0])
     batch_size = len(muscle_length)
 
     steps = 50
@@ -77,8 +87,10 @@ def isometric_simulation():
     t = 0
     dt = .005
     for i in range(steps):
-        d = m.derivative(muscle_length, total_length, activation)
-        muscle_length = muscle_length + dt*d
+        da = a.derivative(activation, excitation)
+        dm = m.derivative(muscle_length, total_length, activation)
+        activation = activation + dt*da
+        muscle_length = muscle_length + dt*dm
         t = t + dt
         times.append(t)
         lengths[:,i] = muscle_length
@@ -88,11 +100,11 @@ def isometric_simulation():
 
     plt.figure(figsize=(7,3))
     plt.subplot(121)
-    plt.plot(times, lengths[2,:])
+    plt.plot(times, lengths.T)
     plt.xlabel('Time (s)')
     plt.ylabel('CE Length')
     plt.subplot(122)
-    plt.plot(times, forces[2,:])
+    plt.plot(times, forces.T)
     plt.xlabel('Time (s)')
     plt.ylabel('Force')
     plt.tight_layout()
@@ -139,7 +151,6 @@ def pendulum_simulation():
         rotation[:,0,1] = -torch.sin(angle)
         rotation[:,1,0] = torch.sin(angle)
         rotation[:,1,1] = torch.cos(angle)
-        # rotation = torch.tensor([[torch.cos(angle), -torch.sin(angle)], [torch.sin(angle), torch.cos(angle)]])
         global_insertion = torch.matmul(rotation, muscle_insertion)
         difference = muscle_origin - global_insertion
         return torch.linalg.vector_norm(difference, dim=1)
@@ -164,13 +175,11 @@ def pendulum_simulation():
     muscle_length = m.muscle_rest_length
     activation = torch.tensor(0.1*np.ones(batch_size))
     excitation = torch.tensor([.25, .5, .75])
-    # activation = .5
 
     for i in range(steps):
         t = t + dt
         total_length = get_total_length(angle)
         torque = muscle_moment_arm * m.force(muscle_length, total_length)
-        # torque = .5
 
         torque = torque - .05*angular_velocity
 
@@ -204,31 +213,25 @@ def pendulum_simulation():
     plt.plot(times, torch.transpose(angles, 0, 1))
     plt.xlabel('Time (s)')
     plt.ylabel('Angle')
+    plt.legend(('25% activation', '50%', '75%'))
     plt.tight_layout()
     plt.show()
 
 
 def force_velocity_contractile(v):
     p0 = 1
-    # b*p0/a = 1
-    # (p+a)v=b(p-p0)
-    # pv+av=bp-bp0
-    # pv-pb=-av-bp0
-    # p (v-b)  = -av - bp0
-    # p = -(av+bp0) / (v-b)
 
     v = torch.clip(v, -1, .99)
     a = 1
     b = 1
-    p = -(a*v+b*p0) / (v-b)
+    p = -(a*v+b*p0) / (v-b) # Hill curve for shortening velocities
 
+    # blend into logistic function with same slope at v=0
     #TODO: this may be too shallow for large lengthening velocities - could reduce 4 to 2
-    # dpdv = (-a*(v-b) + (a*v+b*p0)) / (v-b)**2
     dpdv0 = (-a*(-b) + (b*p0)) / (-b)**2
     x = 4*dpdv0*v
     p2 = .5 + 1 / (1+torch.exp(-x))
     return torch.minimum(p, p2)
-    # return p, p2
 
 
 def force_velocity_contractile_inverse(p):
@@ -243,12 +246,10 @@ def force_velocity_contractile_inverse(p):
     dpdv0 = (-a * (-b) + (b * p0)) / (-b) ** 2
     v2 = x/4/dpdv0
 
-    # return v1, v2
     return torch.maximum(v1, v2)
 
 
 def force_length_contractile(l):
-    # force = np.maximum(0, np.cos(np.pi*(l-1)))
     return torch.exp( - (l-1)**2 / (2*.3**2) )
 
 
@@ -260,14 +261,6 @@ def force_length_series(l):
 def force_length_parallel(l):
     stretch = torch.relu(l - 1)
     return 3*stretch**2 / (.6 + stretch)
-
-# logistic function: f(x) = 1/(1+e^-x)
-# derivative: df(x)/dx = f(x) * (1-f(x))
-# want derivative to match at x=0, where df(x)/dx = 1/4
-# so if desired derivative is dp/dv, we want x=4(dp/dv)v
-# dp/dv = (g'h -gh') / h^2 where g=-(av+bp0) and h=v-b
-# g'=-a h'=1
-# dp/dv = ( -a(v-b) + (av+bp0) ) / (v-b)^2
 
 
 def plot_curves():
@@ -309,6 +302,6 @@ def plot_curves():
 
 if __name__ == '__main__':
     # plot_curves()
-    # isometric_simulation()
+    isometric_simulation()
     # activation_simulation()
-    pendulum_simulation()
+    # pendulum_simulation()

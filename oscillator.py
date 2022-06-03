@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
+
 class Oscillator:
     def __init__(self, n_neurons, freq=2*np.pi, tau=.5):
         self.n_neurons = n_neurons
@@ -120,17 +121,17 @@ def simulate(oscillator, dt, T):
 
 
 if __name__ == '__main__':
-    # o = Oscillator(50)
-    # # visualize_outputs(o)
-    # simulate(o, .01, 2*np.pi)
+    o = Oscillator(50)
+    visualize_outputs(o)
+    simulate(o, .01, 2*np.pi)
 
-    freq = 1 * np.pi
-    tau = 0.25
-    o = Oscillator(50, freq=freq, tau=tau)
-    # simulate(o, .01, 1)
-
-    torch_oscillator = TorchOscillator(o.encoders, o.biases, o.decoders)
-    # output = torch_oscillator.get_output(torch.zeros(2))
-    output = torch_oscillator.get_output(torch.zeros(10,2))
-    print(output)
+    # freq = 1 * np.pi
+    # tau = 0.25
+    # o = Oscillator(50, freq=freq, tau=tau)
+    # # simulate(o, .01, 1)
+    #
+    # torch_oscillator = TorchOscillator(o.encoders, o.biases, o.decoders)
+    # # output = torch_oscillator.get_output(torch.zeros(2))
+    # output = torch_oscillator.get_output(torch.zeros(10,2))
+    # print(output)
 

@@ -3,7 +3,7 @@ import torch
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from scipy.integrate import solve_ivp
-
+from muscle import Muscle
 
 
 class TorchOneLinkTorqueLimb:
@@ -31,6 +31,93 @@ class TorchOneLinkTorqueLimb:
         derivative[:,1] = (u[:,0] - self.mass * 9.81 * self.com * torch.sin(x[:,0])) / self.I
 
         return derivative
+
+
+class TorchOneLinkMuscleLimb:
+    def __init__(self):
+        self.com = .025
+        self.mass = .01
+        self.I = .0002
+
+        self.m1_origin = torch.tensor([.002, 0])  # global coords
+        self.m1_insertion = torch.tensor([0, -.025])  # link coords
+        self.m1_moment_arm = .002
+
+        self.m2_origin = torch.tensor([-.002, 0])  # global coords
+        self.m2_insertion = torch.tensor([0, -.025])  # link coords
+        self.m2_moment_arm = -.002
+
+        self.resting_angle = torch.zeros(1)
+
+        max_iso_force = 8
+        m1_rest_length = get_muscle_tendon_length(torch.zeros(1), self.m1_origin, self.m1_insertion)
+        self.m1 = Muscle(max_iso_force, .9 * m1_rest_length, .1 * m1_rest_length, 3 * m1_rest_length)
+        m2_rest_length = get_muscle_tendon_length(torch.zeros(1), self.m1_origin, self.m1_insertion)
+        self.m2 = Muscle(max_iso_force, .9 * m2_rest_length, .1 * m2_rest_length, 3 * m2_rest_length)
+
+        self.device = None
+
+    def set_device(self, device):
+        self.device = device
+        self.m1_origin = self.m1_origin.to(device)
+        self.m1_insertion = self.m1_insertion.to(device)
+        self.m2_origin = self.m2_origin.to(device)
+        self.m2_insertion = self.m2_insertion.to(device)
+        self.resting_angle = self.resting_angle.to(device)
+
+    def get_m1_length(self, angle):
+        return get_muscle_tendon_length(angle, self.m1_origin, self.m1_insertion, self.device)
+
+    def get_m2_length(self, angle):
+        return get_muscle_tendon_length(angle, self.m2_origin, self.m2_insertion, self.device)
+
+    def f(self, x, u):
+        """
+        :param x: state (angle, angular velocity, m1_contractile_length, m2_contractile_length)
+        :param u: input (m1_activation, m2_activation)
+        :return: temporal derivative of state
+        """
+        batch_size = len(u)
+        derivative = torch.zeros(batch_size, 4)
+
+        if self.device is not None:
+            derivative = derivative.to(self.device)
+
+        m1_contractile_length = x[:,2]
+        m2_contractile_length = x[:,3]
+        m1_length = self.get_m1_length(x[:,0])
+        m2_length = self.get_m2_length(x[:,0])
+
+        # print(m1_contractile_length.device)
+        # print(m1_length.device)
+
+        m1_torque = self.m1_moment_arm * self.m1.force(m1_contractile_length, m1_length)
+        m2_torque = self.m2_moment_arm * self.m2.force(m2_contractile_length, m2_length)
+        torque = m1_torque + m2_torque
+
+        torque = torque - .0005*x[:,1]
+
+        # note u[:,0] needed here to avoid adding 3x1 tensor to 3 tensor, resulting in 3x3
+        derivative[:,0] = x[:,1]
+        derivative[:,1] = (torque - self.mass * 9.81 * self.com * torch.sin(x[:,0])) / self.I
+        derivative[:,2] = self.m1.derivative(m1_contractile_length, m1_length, u[:,0])
+        derivative[:,3] = self.m2.derivative(m2_contractile_length, m2_length, u[:,1])
+
+        return derivative
+
+
+def get_muscle_tendon_length(angle, global_origin, local_insertion, device=None):
+    rotation = torch.zeros((len(angle), 2, 2))
+    if device is not None:
+        rotation = rotation.to(device)
+
+    rotation[:,0,0] = torch.cos(angle)
+    rotation[:,0,1] = -torch.sin(angle)
+    rotation[:,1,0] = torch.sin(angle)
+    rotation[:,1,1] = torch.cos(angle)
+    global_insertion = torch.matmul(rotation, local_insertion)
+    difference = global_origin - global_insertion
+    return torch.linalg.vector_norm(difference, dim=1)
 
 
 class OneLinkTorqueLimb:
@@ -252,21 +339,51 @@ def simulate_two_link(model, dt, T, batch_size=3):
     plt.show()
 
 
-def simulate(model, dt, T, batch_size=1):
+def simulate_one_link(model, dt, T, batch_size=1):
+    """
+    Runs an example simulation with constant input
+
+    :param model: one-link limb model
+    :param dt: time step size
+    :param T: duration of simulation
+    :param batch_size: number of simulations to run in parallel
+    """
     times = []
     states = []
 
     time = 0
-    state = np.zeros((batch_size,2))
+    # state = np.zeros((batch_size,2))
+    state = np.zeros((batch_size,4))
+    state[:,2] = model.m1.muscle_rest_length
+    state[:,3] = model.m2.muscle_rest_length
     state = torch.Tensor(state)
 
     times.append(time)
     states.append(state.numpy())
 
     while time < T:
-        u = 0.0005 * (time > .1) * np.ones((batch_size,1))
-        u = torch.Tensor(u)
+        # :param x: state (angle, angular velocity, m1_contractile_length, m2_contractile_length)
+        # :param u: input (m1_activation, m2_activation)
+
+        # u = 0.0005 * (time > .1) * np.ones((batch_size,1))
+        u = torch.zeros((batch_size, 2))
+        u[:,0] = 0
+        u[:,1] = .2
+
+        # euler
         derivative = model.f(state, u)
+
+        # # explicit trapezoid
+        # s1 = model.f(state, u)
+        # s2 = model.f(state + dt*s1, u)
+        # derivative = (s1 + s2) / 2
+
+        # # RK4
+        # s1 = model.f(state, u)
+        # s2 = model.f(state + dt/2*s1, u)
+        # s3 = model.f(state + dt/2*s2, u)
+        # s4 = model.f(state + dt*s3, u)
+        # derivative = 1/6 * (s1 + 2*s2 + 2*s3 + s4)
 
         time = time + dt
         state = state + dt*derivative
@@ -289,7 +406,7 @@ def simulate(model, dt, T, batch_size=1):
     plt.plot(times, states.squeeze())
     plt.xlabel('Time (s)')
     plt.ylabel('State')
-    plt.legend(('x1', 'x2'))
+    plt.legend(('Angle', 'Ang Vel', 'M1 Length', 'M2 Length'))
     plt.show()
 
 
@@ -309,8 +426,11 @@ if __name__ == '__main__':
     # plt.show()
 
     # model = TorchOneLinkTorqueLimb()
-    # simulate(model, .01, 4)
+    model = TorchOneLinkMuscleLimb()
+    simulate_one_link(model, .001, 4)
 
-    model = TwoLinkTorqueLimb()
+    # model = TwoLinkTorqueLimb()
     # model = TorchTwoLinkTorqueLimb()
-    simulate_two_link(model, .001, 4)
+    # simulate_two_link(model, .001, 4)
+
+
