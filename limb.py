@@ -429,6 +429,14 @@ if __name__ == '__main__':
     model = TorchOneLinkMuscleLimb()
     simulate_one_link(model, .001, 4)
 
+    # angles = torch.Tensor(np.linspace(-np.pi, np.pi, 100))
+    # m1 = model.get_m1_length(angles)
+    # m2 = model.get_m2_length(angles)
+    # plt.plot(angles, m1)
+    # plt.plot(angles, m2)
+    # plt.tight_layout()
+    # plt.show()
+
     # model = TwoLinkTorqueLimb()
     # model = TorchTwoLinkTorqueLimb()
     # simulate_two_link(model, .001, 4)

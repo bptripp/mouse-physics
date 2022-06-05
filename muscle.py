@@ -255,7 +255,8 @@ def force_length_contractile(l):
 
 def force_length_series(l):
     stretch = torch.relu(l-1)
-    return 10*stretch + 200*stretch**2
+    # return 10*stretch + 200*stretch**2
+    return 1*stretch + 20*stretch**2
 
 
 def force_length_parallel(l):
@@ -301,7 +302,7 @@ def plot_curves():
 
 
 if __name__ == '__main__':
-    # plot_curves()
-    isometric_simulation()
+    plot_curves()
+    # isometric_simulation()
     # activation_simulation()
     # pendulum_simulation()

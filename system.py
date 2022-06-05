@@ -7,24 +7,11 @@ import torch.optim as optim
 from oscillator import Oscillator, TorchOscillator
 from limb import TorchOneLinkTorqueLimb, TorchOneLinkMuscleLimb
 
-#DONE: enforce 2D oscillator input - seems worse
-#DONE: support minibatches
-#DONE: try always starting at zero (should be easier)
-#DONE: add constant / bias - should relate to target (bypass oscillators?)
-#DONE: regularization
+#TODO: muscle not initially tight?
 #TODO: learning rate higher after oscillator? (so it tends to exploit whatever basis is available)
-#DONE: higher cost for velocity? or cost for torque?
-#DONE: try setting initial state instead of input (like Sahani's results)
 #TODO: remove second conv layer?
 #TODO: save oscillator params - make oscillator a nn.Module and impl state_dict and load_state_dict
-#TODO: Hill-type muscle model
-#DONE: reduce torque cost (model consistently undershoots a lot)
-#DONE: reduce weight regularization - seems to work very slightly better
-#DONE: lower velocity cost (or introduce later) - with vel cost in 2nd half typically hits target then gives up
-#DONE: remove velocity cost - works much better, final velocity close to zero anyway
 #TODO: provide steady-state input to oscillators?
-#TODO: Nat says consider connections to motor primitives (these would be latent components before oscillators?)
-#TODO: Michael says consider connections to CPGs
 #TODO: need curriculum training for more complex action spaces?
 #TODO: gate other additive controls as well, e.g. feedback control, low-level reflexes
 #TODO: how to control movement vigour - consider role of basal ganglia? more than that
@@ -39,24 +26,22 @@ class Net(nn.Module):
 
         self.fc1 = nn.Linear(2, 128)
         self.fc2 = nn.Linear(128, 128)
-        # self.fc3 = nn.Linear(128, self.n_oscillators*self.n_per_oscillator)
         self.fc3 = nn.Linear(128, self.n_oscillators*2)
+
+        # note inputs to physical system start small without bias for stability
 
         self.fcdirect = nn.Linear(128, 2)
         self.fcdirect.weight = torch.nn.parameter.Parameter(self.fcdirect.weight / 100)
-        self.fcdirect.bias = torch.nn.parameter.Parameter(self.fcdirect.bias * 0)
+        self.fcdirect.bias = torch.nn.parameter.Parameter(self.fcdirect.bias * 0 + .1)
+        # self.fcdirect.bias = torch.nn.parameter.Parameter(self.fcdirect.bias * 0 + torch.Tensor([0, .5]))
 
         self.oscillators = []
-        # x1_encoders = []
         for i in range(self.n_oscillators):
             freq = 4*np.pi*np.random.rand()
             tau = .5*np.random.rand()
             o = Oscillator(self.n_per_oscillator, freq=freq, tau=tau)
             torch_oscillator = TorchOscillator(o.encoders, o.biases, o.decoders)
             self.oscillators.append(torch_oscillator)
-            # x1_encoders.append(torch_oscillator.encoders[0,:])
-
-        # x1_encoders = torch.cat(x1_encoders)
 
         self.fc4 = nn.Linear(self.n_oscillators * self.n_per_oscillator, 2)
         self.fc4.weight = torch.nn.parameter.Parameter(self.fc4.weight / 10000)
@@ -67,116 +52,86 @@ class Net(nn.Module):
 
         self.device = None
 
-        # self.fcfoo = nn.Linear(self.n_oscillators * self.n_per_oscillator, 2)
-
     def forward(self, x, return_oscillator_state=False):
         """
-        :param x: (current state, desired state)
+        :param x: (current angle, desired angle)
         """
 
         batch_size = x.shape[0]
-        current_state = x[:,0]
-        # current_state = x[0]
+        current_angle = x[:,0]
 
         x = self.fc1(x)
         x = F.relu(x)
-        direct = self.fcdirect(x)
+        direct = self.fcdirect(x) # direct static input to muscles rather than oscillators
         x = self.fc2(x)
         x = F.relu(x)
         x = self.fc3(x)
 
-        #TODO: use torch.split instead of torch.narrow?
-
         o_states = torch.zeros((self.n_oscillators, batch_size, 2))
         # l_state = torch.zeros((batch_size, 2))
-        # l_state[:,0] = current_state
+        # l_state[:,0] = current_angle
         l_state = torch.zeros((batch_size, 4))
-        l_state[:,0] = current_state
+        l_state[:,0] = current_angle
+        l_state[:,2] = self.limb.get_m1_length(current_angle)
+        l_state[:,3] = self.limb.get_m2_length(current_angle)
 
-        # dt = 0.01
-        steps = 100
         dt = 0.001
         steps = 700
         # l_states = torch.zeros(steps, batch_size, 2)
         # torques = torch.zeros(steps, batch_size)
         l_states = torch.zeros(steps, batch_size, 4)
-        torques = torch.zeros(steps, batch_size, 2)
+        activations = torch.zeros(steps, batch_size, 2)
 
         if self.device is not None:
             o_states = o_states.to(self.device)
             l_state = l_state.to(self.device)
             l_states = l_states.to(self.device)
-            torques = torques.to(self.device)
+            activations = activations.to(self.device)
 
         o_state_history = []
 
-        if torch.mean(x).isnan():
+        if torch.mean(x).isnan(): # alert to unstable run
            print(x)
 
         # input sets initial oscillator state
         for j in range(self.n_oscillators):
+            # TODO: use torch.split instead of torch.narrow?
             xi = torch.narrow(x, 1, j * 2, 2)
             o_states[j,:,:] = xi
 
         for i in range(steps):
-            # activities = []
             activities = torch.zeros((batch_size, self.n_oscillators*self.n_per_oscillator))
             if self.device is not None:
                 activities = activities.to(self.device)
 
             for j in range(self.n_oscillators):
-                # xi = torch.narrow(x, 0, j * self.n_per_oscillator, self.n_per_oscillator)
-                # a = self.oscillators[j].get_activities(o_states[j,:], direct=xi)
-                # xi = torch.narrow(x, 0, j * 2, 2)
-
                 a = self.oscillators[j].get_activities(o_states[j,:,:])
-                # print(a.shape)
-                # activities.append(a)
                 activities[:,j*self.n_per_oscillator:(j+1)*self.n_per_oscillator] = a
-                # derivative = torch.matmul(self.oscillators[j].decoders, a)
-                # # derivative = torch.matmul(self.oscillators[j].decoders, a) + xi
                 derivative = torch.matmul(self.oscillators[j].decoders, a.T).T
-                # derivative = self.oscillators[j].get_output(o_states[j,:,:]).T
 
                 o_states[j,:,:] = o_states[j,:,:] + dt * derivative
 
             if return_oscillator_state:
                 o_state_history.append(o_states.detach().cpu().numpy().copy())
 
-            # activities = torch.cat(activities)
-            # print(activities.shape)
-            # print(activities)
-            torque = (self.fc4(activities) + direct) ## muscle activation now
-            # torque = direct
+            activation = (self.fc4(activities) + direct)
 
-            # torques[i,:] = torque.T
-            torques[i,:,:] = torque
+            activations[i,:,:] = activation
 
-            derivative = self.limb.f(l_state, torque)
+            derivative = self.limb.f(l_state, activation)
             l_state = l_state + dt*derivative
 
             # range of motion limits
-            out_of_bounds = (l_state[:,0] > np.pi/3) + (l_state[:,0] > np.pi/3)
-            # print(out_of_bounds) ########################
-
-            # l_state[:,0] = torch.minimum(l_state[:,0], np.pi/3)
-            # l_state[:,0] = torch.maximum(l_state[:,0], -np.pi/3)
-            # if l_state[0] > np.pi/3:
-            #     l_state[0] = np.pi/3
-            #     l_state[1] = 0
-            # if l_state[0] < -np.pi/3:
-            #     l_state[0] = -np.pi/3
-            #     l_state[1] = 0
+            l_state[:,1] = l_state[:,1] * (-np.pi/2 < l_state[:,0] < np.pi/2)
+            l_state[:,0] = torch.minimum(l_state[:,0], np.pi/2*torch.ones(l_state.shape[0]))
+            l_state[:,0] = torch.maximum(l_state[:,0], -np.pi/2*torch.ones(l_state.shape[0]))
 
             l_states[i,:,:] = l_state
 
-        # return torch.cat((self.fcfoo(activities), self.fcfoo(activities))).reshape((2,2))
-        # return torch.cat((l_state, l_state)).reshape((2,2))
-
         if return_oscillator_state:
-            return l_states, torques, np.array(o_state_history)
+            return l_states, activations, np.array(o_state_history)
         else:
-            return l_states, torques
+            return l_states, activations
 
 
 def train(net, batch_size=3, batches=20000, device=None):
@@ -192,14 +147,9 @@ def train(net, batch_size=3, batches=20000, device=None):
         #     net.fc2.requires_grad = False
         #     net.fc3.requires_grad = False
 
-        # start = -np.pi/2 + np.pi*np.random.rand()
-        # start = 0
-        # target = -np.pi/2 + np.pi*np.random.rand()
-
         input = -np.pi/2 + np.pi*np.random.rand(batch_size, 2)
         # input[:,0] = 0
 
-        # input = torch.Tensor([start, target])
         input = torch.Tensor(input)
         if device is not None:
             input = input.to(device)
@@ -208,26 +158,18 @@ def train(net, batch_size=3, batches=20000, device=None):
 
         outputs, torques = net(input)
 
-        # labels = torch.ones(outputs.shape)
-        # labels[:,0] = labels[:,0] * target
-        # labels[:,1] = labels[:,1] * 0 # aim for zero velocity
         labels = torch.zeros(outputs.shape)
-        labels[:,:,0] = input[:,1]
+        labels[:,:,0] = input[:,1] # aim for target angle with zero velocity
         if device is not None:
             labels = labels.to(device)
 
         print('.', end='')
-        # print(input.is_cuda)
-        # print(labels.is_cuda)
-        # print(outputs.is_cuda)
-        # print(torques.is_cuda)
 
         target_loss = torch.mean( (outputs[:,:,0] - input[:,1]).pow(2) )
         velocity_loss = torch.mean(outputs[50:,:,0].pow(2)) # could ramp on less abruptly
         torque_loss = torch.mean(torques.pow(2))
-        loss = target_loss + torque_loss
+        loss = target_loss + torque_loss # using velocity loss impairs learning
         # loss = target_loss + velocity_loss + torque_loss
-        # loss = criterion(outputs, labels) + 1*torch.mean(torques.pow(2))
 
         # param_norm = sum(param.norm(2) for param in net.parameters())
         # loss = loss + 1e-6 * param_norm
@@ -255,20 +197,18 @@ def train(net, batch_size=3, batches=20000, device=None):
 
             torch.cuda.empty_cache()
 
-        loss.mean().backward() #note mean will kind of scale learning rate with batch size
+        loss.mean().backward()
         optimizer.step()
 
 
 def plot_example(net, device=None):
     start = -np.pi / 2 + np.pi * np.random.rand()
-    # start = 0
     target = -np.pi / 2 + np.pi * np.random.rand()
     print(target)
 
     input = torch.Tensor([[start, target]])
     if device is not None:
         input = input.to(device)
-    # outputs = net(input).detach().numpy()
     outputs, torques, o_states = net.forward(input, return_oscillator_state=True)
     outputs = outputs.detach().cpu().numpy()
     outputs = outputs[:,0,:]
@@ -285,7 +225,6 @@ def plot_example(net, device=None):
     print(o_states.shape)
     print(np.min(o_states.flatten()))
     for i in range(o_states.shape[1]):
-        # print(time, o_states[:,i,0])
         plt.plot(time, o_states[:,i,0], '.')
     plt.tight_layout()
     plt.show()
@@ -295,20 +234,20 @@ if __name__ == '__main__':
     net = Net()
     # print(net)
 
-    # current_state = 0.0
-    # desired_state = 1.0
-    # input = torch.tensor([current_state, desired_state])
-    # l_states = net.forward(input)
-    # trajectory = l_states.detach().numpy()
+    current_angle = 0.0
+    desired_angle = 1.0
+    input = torch.tensor([[current_angle, desired_angle]])
+    l_states, torques = net.forward(input)
+    trajectory = l_states.detach().numpy().squeeze()
+
+    plt.plot(trajectory)
+    plt.legend(('angle', 'velocity', 'm1', 'm2'))
+    plt.show()
+
+    # train(net)
     #
-    # plt.plot(trajectory)
-    # plt.legend(('angle', 'velocity'))
-    # plt.show()
-
-    train(net)
-
-    checkpoint = torch.load('oscillator_limb_checkpoint.pt')
-    print(checkpoint['loss'])
-    net.load_state_dict(checkpoint['model_state_dict'])
-    plot_example(net)
+    # checkpoint = torch.load('oscillator_limb_checkpoint.pt')
+    # print(checkpoint['loss'])
+    # net.load_state_dict(checkpoint['model_state_dict'])
+    # plot_example(net)
 
