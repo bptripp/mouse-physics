@@ -122,9 +122,12 @@ class Net(nn.Module):
             l_state = l_state + dt*derivative
 
             # range of motion limits
-            l_state[:,1] = l_state[:,1] * (-np.pi/2 < l_state[:,0] < np.pi/2)
-            l_state[:,0] = torch.minimum(l_state[:,0], np.pi/2*torch.ones(l_state.shape[0]))
-            l_state[:,0] = torch.maximum(l_state[:,0], -np.pi/2*torch.ones(l_state.shape[0]))
+            limited = torch.zeros_like(l_state)
+            pos = l_state[:, 0]
+            limited[:,0] = torch.clip(pos, -np.pi / 2, np.pi / 2)
+            limited[:,1] = l_state[:,1] * torch.gt(pos, -np.pi/2).int() * torch.lt(pos, np.pi/2).int()
+            limited[:,2:] = l_state[:,2:]
+            l_state = limited
 
             l_states[i,:,:] = l_state
 
@@ -245,7 +248,7 @@ if __name__ == '__main__':
     plt.show()
 
     # train(net)
-    #
+
     # checkpoint = torch.load('oscillator_limb_checkpoint.pt')
     # print(checkpoint['loss'])
     # net.load_state_dict(checkpoint['model_state_dict'])
