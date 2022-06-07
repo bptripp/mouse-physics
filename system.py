@@ -43,9 +43,11 @@ class Net(nn.Module):
             torch_oscillator = TorchOscillator(o.encoders, o.biases, o.decoders)
             self.oscillators.append(torch_oscillator)
 
-        self.fc4 = nn.Linear(self.n_oscillators * self.n_per_oscillator, 2)
-        self.fc4.weight = torch.nn.parameter.Parameter(self.fc4.weight / 10000)
-        self.fc4.bias = torch.nn.parameter.Parameter(self.fc4.bias * 0)
+        self.fc4 = nn.Linear(self.n_oscillators * self.n_per_oscillator, 128)
+
+        self.fc5 = nn.Linear(128, 2)
+        self.fc5.weight = torch.nn.parameter.Parameter(self.fc5.weight / 10000)
+        self.fc5.bias = torch.nn.parameter.Parameter(self.fc5.bias * 0)
 
         # self.limb = TorchOneLinkTorqueLimb()
         self.limb = TorchOneLinkMuscleLimb()
@@ -114,7 +116,8 @@ class Net(nn.Module):
             if return_oscillator_state:
                 o_state_history.append(o_states.detach().cpu().numpy().copy())
 
-            activation = (self.fc4(activities) + direct)
+            x = self.fc4(activities)
+            activation = (self.fc5(x) + direct)
 
             activations[i,:,:] = activation
 
@@ -234,11 +237,11 @@ if __name__ == '__main__':
     current_angle = 0.0
     desired_angle = 1.0
     input = torch.tensor([[current_angle, desired_angle]])
-    l_states, torques = net.forward(input)
-    trajectory = l_states.detach().numpy().squeeze()
-
-    plt.plot(trajectory)
+    l_states, activations = net.forward(input)
+    plt.plot(l_states.detach().numpy().squeeze())
     plt.legend(('angle', 'velocity', 'm1', 'm2'))
+    plt.show()
+    plt.plot(activations.detach().numpy().squeeze())
     plt.show()
 
     # train(net)
