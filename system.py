@@ -161,17 +161,11 @@ def train(net, batch_size=3, batches=20000, device=None):
 
         outputs, torques = net(input)
 
-        labels = torch.zeros(outputs.shape)
-        labels[:,:,0] = input[:,1] # aim for target angle with zero velocity
-        if device is not None:
-            labels = labels.to(device)
-
         print('.', end='')
 
         target_loss = torch.mean( (outputs[:,:,0] - input[:,1]).pow(2) )
-        velocity_loss = torch.mean(outputs[50:,:,0].pow(2)) # could ramp on less abruptly
         torque_loss = torch.mean(torques.pow(2))
-        loss = target_loss + torque_loss # using velocity loss impairs learning
+        loss = target_loss + torque_loss/10 # using velocity loss impairs learning
         # loss = target_loss + velocity_loss + torque_loss
 
         # param_norm = sum(param.norm(2) for param in net.parameters())
@@ -179,7 +173,7 @@ def train(net, batch_size=3, batches=20000, device=None):
 
         # print('start: {} target: {}'.format(start, target))
         # print('{} {}'.format(i, loss.item()))
-        running_loss += loss.mean()
+        running_loss += loss.mean().detach()
         if i % 50 == 49:
             mean_loss = running_loss / 50
             print('[%5d] loss: %.3f' % (i + 1, mean_loss))
@@ -223,7 +217,7 @@ def plot_example(net, device=None):
     plt.plot(time, target*np.ones_like(time))
     plt.plot(time, outputs)
     plt.subplot(132)
-    plt.plot(time, torques)
+    plt.plot(time, torques.squeeze())
     plt.subplot(133)
     print(o_states.shape)
     print(np.min(o_states.flatten()))
