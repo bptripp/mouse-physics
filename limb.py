@@ -21,7 +21,7 @@ class TorchOneLinkTorqueLimb:
         :return: temporal derivative of state
         """
         batch_size = len(u)
-        derivative = torch.zeros(batch_size, 2)
+        derivative = torch.zeros(batch_size, 2, dtype=torch.float64)
 
         if self.device is not None:
             derivative = derivative.to(self.device)
@@ -39,20 +39,20 @@ class TorchOneLinkMuscleLimb:
         self.mass = .01
         self.I = .0002
 
-        self.m1_origin = torch.tensor([.002, 0])  # global coords
-        self.m1_insertion = torch.tensor([0, -.025])  # link coords
+        self.m1_origin = torch.tensor([.002, 0], dtype=torch.float64)  # global coords
+        self.m1_insertion = torch.tensor([0, -.025], dtype=torch.float64)  # link coords
         self.m1_moment_arm = .002
 
-        self.m2_origin = torch.tensor([-.002, 0])  # global coords
-        self.m2_insertion = torch.tensor([0, -.025])  # link coords
+        self.m2_origin = torch.tensor([-.002, 0], dtype=torch.float64)  # global coords
+        self.m2_insertion = torch.tensor([0, -.025], dtype=torch.float64)  # link coords
         self.m2_moment_arm = -.002
 
-        self.resting_angle = torch.zeros(1)
+        self.resting_angle = torch.zeros(1, dtype=torch.float64)
 
         max_iso_force = 8
-        m1_rest_length = get_muscle_tendon_length(torch.zeros(1), self.m1_origin, self.m1_insertion)
+        m1_rest_length = get_muscle_tendon_length(torch.zeros(1, dtype=torch.float64), self.m1_origin, self.m1_insertion)
         self.m1 = Muscle(max_iso_force, .9 * m1_rest_length, .1 * m1_rest_length, 3 * m1_rest_length)
-        m2_rest_length = get_muscle_tendon_length(torch.zeros(1), self.m1_origin, self.m1_insertion)
+        m2_rest_length = get_muscle_tendon_length(torch.zeros(1, dtype=torch.float64), self.m1_origin, self.m1_insertion)
         self.m2 = Muscle(max_iso_force, .9 * m2_rest_length, .1 * m2_rest_length, 3 * m2_rest_length)
 
         self.device = None
@@ -78,7 +78,7 @@ class TorchOneLinkMuscleLimb:
         :return: temporal derivative of state
         """
         batch_size = len(u)
-        derivative = torch.zeros(batch_size, 4)
+        derivative = torch.zeros(batch_size, 4, dtype=torch.float64)
 
         if self.device is not None:
             derivative = derivative.to(self.device)
@@ -107,7 +107,7 @@ class TorchOneLinkMuscleLimb:
 
 
 def get_muscle_tendon_length(angle, global_origin, local_insertion, device=None):
-    rotation = torch.zeros((len(angle), 2, 2))
+    rotation = torch.zeros((len(angle), 2, 2), dtype=torch.float64)
     if device is not None:
         rotation = rotation.to(device)
 
@@ -339,7 +339,7 @@ def simulate_two_link(model, dt, T, batch_size=3):
     plt.show()
 
 
-def simulate_one_link(model, dt, T, batch_size=1):
+def simulate_one_link(model, dt, T, batch_size=1, method='rk4'):
     """
     Runs an example simulation with constant input
 
@@ -353,7 +353,7 @@ def simulate_one_link(model, dt, T, batch_size=1):
 
     time = 0
     # state = np.zeros((batch_size,2))
-    state = np.zeros((batch_size,4))
+    state = np.zeros((batch_size,4), dtype=np.float64)
     state[:,2] = model.m1.muscle_rest_length
     state[:,3] = model.m2.muscle_rest_length
     state = torch.Tensor(state)
@@ -366,24 +366,27 @@ def simulate_one_link(model, dt, T, batch_size=1):
         # :param u: input (m1_activation, m2_activation)
 
         # u = 0.0005 * (time > .1) * np.ones((batch_size,1))
-        u = torch.zeros((batch_size, 2))
+        u = torch.zeros((batch_size, 2), dtype=torch.float64)
         u[:,0] = 0
         u[:,1] = .2
 
         # euler
-        derivative = model.f(state, u)
-
-        # # explicit trapezoid
-        # s1 = model.f(state, u)
-        # s2 = model.f(state + dt*s1, u)
-        # derivative = (s1 + s2) / 2
-
+        if method == 'euler':
+            derivative = model.f(state, u)
+        # explicit trapezoid
+        elif method == 'explicit-trap':
+            s1 = model.f(state, u)
+            s2 = model.f(state + dt*s1, u)
+            derivative = (s1 + s2) / 2
         # # RK4
-        # s1 = model.f(state, u)
-        # s2 = model.f(state + dt/2*s1, u)
-        # s3 = model.f(state + dt/2*s2, u)
-        # s4 = model.f(state + dt*s3, u)
-        # derivative = 1/6 * (s1 + 2*s2 + 2*s3 + s4)
+        elif method == 'rk4':
+            s1 = model.f(state, u)
+            s2 = model.f(state + dt/2*s1, u)
+            s3 = model.f(state + dt/2*s2, u)
+            s4 = model.f(state + dt*s3, u)
+            derivative = 1/6 * (2 * s1 + s2 + s3 + 2 * s4)
+        else:
+            raise RuntimeWarning(f'Unrecognized integration method {method}')
 
         time = time + dt
         state = state + dt*derivative
@@ -403,11 +406,10 @@ def simulate_one_link(model, dt, T, batch_size=1):
     times = np.array(times)
     states = np.array(states)
 
+    return times, states
+
+def plot_one_link_results(times, states):
     plt.plot(times, states.squeeze())
-    plt.xlabel('Time (s)')
-    plt.ylabel('State')
-    plt.legend(('Angle', 'Ang Vel', 'M1 Length', 'M2 Length'))
-    plt.show()
 
 
 if __name__ == '__main__':
@@ -427,7 +429,62 @@ if __name__ == '__main__':
 
     # model = TorchOneLinkTorqueLimb()
     model = TorchOneLinkMuscleLimb()
-    simulate_one_link(model, .001, 4)
+    times_eu_001, states_eu_001 = simulate_one_link(model, .001, 4, method='euler')
+    times_eu_01, states_eu_01 = simulate_one_link(model, .01, 4, method='euler')
+
+
+    times_rk_001, states_rk_001 = simulate_one_link(model, .001, 4)
+    times_rk_01, states_rk_01 = simulate_one_link(model, .01, 4)
+
+    def rmse(x,y):
+        return np.sqrt(np.mean(np.power(x-y,2)))
+
+    print('RK 0.001 vs Euler 0.001: ', rmse(states_eu_001, states_rk_001))
+    print('RK 0.01 vs Euler 0.001: ', rmse((states_eu_001[::10]), states_rk_01[:-1]))
+    print('RK 0.01 vs RK 0.001: ', rmse((states_rk_001[::10]), states_rk_01[:-1]))
+
+
+    times_et_001, states_et_001 = simulate_one_link(model, .001, 4, method='explicit-trap')
+    times_et_01, states_et_01 = simulate_one_link(model, .01, 4, method='explicit-trap')
+
+
+    plt.figure()
+    plt.subplot(2,1,1)
+    plot_one_link_results(times_rk_001, states_rk_001)
+    plt.subplot(2,1,2)
+    plot_one_link_results(times_rk_01, states_rk_01)
+
+
+    plt.figure()
+    plt.subplot(2,3,1)
+    plot_one_link_results(times_eu_001, states_eu_001)
+#     plt.xlabel('Time (s)')
+    plt.legend(('Angle', 'Ang Vel', 'M1 Length', 'M2 Length'))
+    plt.ylabel('State, dt=0.001')
+    plt.title('Euler')
+
+    plt.subplot(2,3,2)
+    plot_one_link_results(times_rk_001, states_rk_001)
+    plt.title('Runge-Kutta 4')
+
+    plt.subplot(2,3,3)
+    plot_one_link_results(times_et_001, states_et_001)
+    plt.title('Explicit Trap')
+
+    plt.subplot(2,3,4)
+    plot_one_link_results(times_eu_01, states_eu_01)
+    plt.xlabel('Time (s)')
+    plt.ylabel('State, dt=0.01')
+
+    plt.subplot(2,3,5)
+    plot_one_link_results(times_rk_01, states_rk_01)
+    plt.xlabel('Time (s)')
+
+    plt.subplot(2,3,6)
+    plot_one_link_results(times_et_01, states_et_01)
+    plt.xlabel('Time (s)')
+
+#     plt.show()
 
     # angles = torch.Tensor(np.linspace(-np.pi, np.pi, 100))
     # m1 = model.get_m1_length(angles)
