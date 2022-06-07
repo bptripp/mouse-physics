@@ -5,6 +5,9 @@ from matplotlib.animation import FuncAnimation
 from scipy.integrate import solve_ivp
 from muscle import Muscle
 
+import time
+
+array_type = torch.float32
 
 class TorchOneLinkTorqueLimb:
     def __init__(self):
@@ -21,7 +24,7 @@ class TorchOneLinkTorqueLimb:
         :return: temporal derivative of state
         """
         batch_size = len(u)
-        derivative = torch.zeros(batch_size, 2, dtype=torch.float64)
+        derivative = torch.zeros(batch_size, 2, dtype=array_type)
 
         if self.device is not None:
             derivative = derivative.to(self.device)
@@ -39,20 +42,20 @@ class TorchOneLinkMuscleLimb:
         self.mass = .01
         self.I = .0002
 
-        self.m1_origin = torch.tensor([.002, 0], dtype=torch.float64)  # global coords
-        self.m1_insertion = torch.tensor([0, -.025], dtype=torch.float64)  # link coords
+        self.m1_origin = torch.tensor([.002, 0], dtype=array_type)  # global coords
+        self.m1_insertion = torch.tensor([0, -.025], dtype=array_type)  # link coords
         self.m1_moment_arm = .002
 
-        self.m2_origin = torch.tensor([-.002, 0], dtype=torch.float64)  # global coords
-        self.m2_insertion = torch.tensor([0, -.025], dtype=torch.float64)  # link coords
+        self.m2_origin = torch.tensor([-.002, 0], dtype=array_type)  # global coords
+        self.m2_insertion = torch.tensor([0, -.025], dtype=array_type)  # link coords
         self.m2_moment_arm = -.002
 
-        self.resting_angle = torch.zeros(1, dtype=torch.float64)
+        self.resting_angle = torch.zeros(1, dtype=array_type)
 
         max_iso_force = 8
-        m1_rest_length = get_muscle_tendon_length(torch.zeros(1, dtype=torch.float64), self.m1_origin, self.m1_insertion)
+        m1_rest_length = get_muscle_tendon_length(torch.zeros(1, dtype=array_type), self.m1_origin, self.m1_insertion)
         self.m1 = Muscle(max_iso_force, .9 * m1_rest_length, .1 * m1_rest_length, 3 * m1_rest_length)
-        m2_rest_length = get_muscle_tendon_length(torch.zeros(1, dtype=torch.float64), self.m1_origin, self.m1_insertion)
+        m2_rest_length = get_muscle_tendon_length(torch.zeros(1, dtype=array_type), self.m1_origin, self.m1_insertion)
         self.m2 = Muscle(max_iso_force, .9 * m2_rest_length, .1 * m2_rest_length, 3 * m2_rest_length)
 
         self.device = None
@@ -78,7 +81,7 @@ class TorchOneLinkMuscleLimb:
         :return: temporal derivative of state
         """
         batch_size = len(u)
-        derivative = torch.zeros(batch_size, 4, dtype=torch.float64)
+        derivative = torch.zeros(batch_size, 4, dtype=array_type)
 
         if self.device is not None:
             derivative = derivative.to(self.device)
@@ -107,7 +110,7 @@ class TorchOneLinkMuscleLimb:
 
 
 def get_muscle_tendon_length(angle, global_origin, local_insertion, device=None):
-    rotation = torch.zeros((len(angle), 2, 2), dtype=torch.float64)
+    rotation = torch.zeros((len(angle), 2, 2), dtype=array_type)
     if device is not None:
         rotation = rotation.to(device)
 
@@ -361,12 +364,29 @@ def simulate_one_link(model, dt, T, batch_size=1, method='rk4'):
     times.append(time)
     states.append(state.numpy())
 
+    if method=='rk4':
+        from torchdiffeq import odeint
+
+        u = torch.zeros((batch_size, 2), dtype=array_type)
+        u[:,0] = 0
+        u[:,1] = .2
+        def partial_func(t,s,u0=u):
+            return model.f(s,u0)
+
+        print(state)
+        times = torch.arange(0,T+2*dt,step=dt)
+        # known good: bosh3, adaptive_heun
+        states = odeint(partial_func, state, times, method='bosh3',atol=1e-4)
+
+        return times.numpy(), states.numpy()
+    ### end if
+
     while time < T:
         # :param x: state (angle, angular velocity, m1_contractile_length, m2_contractile_length)
         # :param u: input (m1_activation, m2_activation)
 
         # u = 0.0005 * (time > .1) * np.ones((batch_size,1))
-        u = torch.zeros((batch_size, 2), dtype=torch.float64)
+        u = torch.zeros((batch_size, 2), dtype=array_type)
         u[:,0] = 0
         u[:,1] = .2
 
@@ -429,23 +449,39 @@ if __name__ == '__main__':
 
     # model = TorchOneLinkTorqueLimb()
     model = TorchOneLinkMuscleLimb()
+
+    slow_dt=0.1
+    eu_001_start = time.time_ns()
     times_eu_001, states_eu_001 = simulate_one_link(model, .001, 4, method='euler')
-    times_eu_01, states_eu_01 = simulate_one_link(model, .01, 4, method='euler')
+    eu_001_end = time.time_ns() - eu_001_start
+
+    eu_01_start = time.time_ns()
+    times_eu_01, states_eu_01 = simulate_one_link(model, slow_dt, 4, method='euler')
+    eu_01_end = time.time_ns() - eu_01_start
 
 
+    rk_001_start = time.time_ns()
     times_rk_001, states_rk_001 = simulate_one_link(model, .001, 4)
-    times_rk_01, states_rk_01 = simulate_one_link(model, .01, 4)
+    rk_001_end = time.time_ns() - rk_001_start
+
+    rk_01_start = time.time_ns()
+    times_rk_01, states_rk_01 = simulate_one_link(model, slow_dt, 4)
+    rk_01_end = time.time_ns() - rk_01_start
+
+    print(eu_001_end * 1e-9, eu_01_end * 1e-9)
+    print(rk_001_end * 1e-9, rk_01_end * 1e-9)
+#     exit()
 
     def rmse(x,y):
         return np.sqrt(np.mean(np.power(x-y,2)))
 
-    print('RK 0.001 vs Euler 0.001: ', rmse(states_eu_001, states_rk_001))
-    print('RK 0.01 vs Euler 0.001: ', rmse((states_eu_001[::10]), states_rk_01[:-1]))
-    print('RK 0.01 vs RK 0.001: ', rmse((states_rk_001[::10]), states_rk_01[:-1]))
+#     print('RK 0.001 vs Euler 0.001: ', rmse(states_eu_001, states_rk_001))
+#     print('RK 0.01 vs Euler 0.001: ', rmse((states_eu_001[::10]), states_rk_01[:-1]))
+#     print('RK 0.01 vs RK 0.001: ', rmse((states_rk_001[::10]), states_rk_01[:-1]))
 
 
     times_et_001, states_et_001 = simulate_one_link(model, .001, 4, method='explicit-trap')
-    times_et_01, states_et_01 = simulate_one_link(model, .01, 4, method='explicit-trap')
+    times_et_01, states_et_01 = simulate_one_link(model, slow_dt, 4, method='explicit-trap')
 
 
     plt.figure()
@@ -474,7 +510,7 @@ if __name__ == '__main__':
     plt.subplot(2,3,4)
     plot_one_link_results(times_eu_01, states_eu_01)
     plt.xlabel('Time (s)')
-    plt.ylabel('State, dt=0.01')
+    plt.ylabel('State, dt=0.1')
 
     plt.subplot(2,3,5)
     plot_one_link_results(times_rk_01, states_rk_01)
@@ -484,7 +520,7 @@ if __name__ == '__main__':
     plot_one_link_results(times_et_01, states_et_01)
     plt.xlabel('Time (s)')
 
-#     plt.show()
+    plt.show()
 
     # angles = torch.Tensor(np.linspace(-np.pi, np.pi, 100))
     # m1 = model.get_m1_length(angles)
