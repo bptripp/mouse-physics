@@ -45,9 +45,13 @@ class Net(nn.Module):
 
         self.fc4 = nn.Linear(self.n_oscillators * self.n_per_oscillator, 128)
 
-        self.fc5 = nn.Linear(128, 2)
-        self.fc5.weight = torch.nn.parameter.Parameter(self.fc5.weight / 10000)
-        self.fc5.bias = torch.nn.parameter.Parameter(self.fc5.bias * 0)
+        # self.fc5a = nn.Linear(self.n_oscillators * self.n_per_oscillator, 2)
+        # self.fc5a.weight = torch.nn.parameter.Parameter(self.fc5a.weight / 10000)
+        # self.fc5a.bias = torch.nn.parameter.Parameter(self.fc5a.bias * 0)
+
+        self.fc5b = nn.Linear(128, 2)
+        self.fc5b.weight = torch.nn.parameter.Parameter(self.fc5b.weight / 10000)
+        self.fc5b.bias = torch.nn.parameter.Parameter(self.fc5b.bias * 0)
 
         # self.limb = TorchOneLinkTorqueLimb()
         self.limb = TorchOneLinkMuscleLimb()
@@ -117,7 +121,8 @@ class Net(nn.Module):
                 o_state_history.append(o_states.detach().cpu().numpy().copy())
 
             x = self.fc4(activities)
-            activation = (self.fc5(x) + direct)
+            x = F.relu(x)
+            activation = (self.fc5b(x) + direct)
 
             activations[i,:,:] = activation
 
