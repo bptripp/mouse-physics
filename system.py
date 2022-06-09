@@ -43,13 +43,14 @@ class Net(nn.Module):
             torch_oscillator = TorchOscillator(o.encoders, o.biases, o.decoders)
             self.oscillators.append(torch_oscillator)
 
-        self.fc4 = nn.Linear(self.n_oscillators * self.n_per_oscillator, 64)
+        nb = 32
+        self.fc4 = nn.Linear(self.n_oscillators * self.n_per_oscillator, nb)
 
-        self.fc5a = nn.Linear(self.n_oscillators * self.n_per_oscillator, 2)
-        self.fc5a.weight = torch.nn.parameter.Parameter(self.fc5a.weight / 10000)
-        self.fc5a.bias = torch.nn.parameter.Parameter(self.fc5a.bias * 0)
+        # self.fc5a = nn.Linear(self.n_oscillators * self.n_per_oscillator, 2)
+        # self.fc5a.weight = torch.nn.parameter.Parameter(self.fc5a.weight / 10000)
+        # self.fc5a.bias = torch.nn.parameter.Parameter(self.fc5a.bias * 0)
 
-        self.fc5b = nn.Linear(64, 2)
+        self.fc5b = nn.Linear(nb, 2)
         self.fc5b.weight = torch.nn.parameter.Parameter(self.fc5b.weight / 10000)
         self.fc5b.bias = torch.nn.parameter.Parameter(self.fc5b.bias * 0)
 
@@ -120,11 +121,12 @@ class Net(nn.Module):
             if return_oscillator_state:
                 o_state_history.append(o_states.detach().cpu().numpy().copy())
 
-            a = self.fc5a(activities)
+            # a = self.fc5a(activities)
             b = self.fc4(activities)
             b = F.relu(b)
             b = self.fc5b(b)
-            activation = (a + b + direct)
+            # activation = (a + b + direct)
+            activation = (b + direct)
 
             activations[i,:,:] = activation
 
